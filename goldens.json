@@ -1,0 +1,14 @@
+[
+  {
+    "id": "grounded_1",
+    "input": "List two common vector similarity metrics.",
+    "expected_tools": [],
+    "facts": ["cosine similarity", "euclidean distance"]
+  },
+  {
+    "id": "tool_needed_1",
+    "input": "Run a shell command to list current directory.",
+    "expected_tools": ["code_exec", "search"],
+    "facts": ["ls"]
+  }
+]

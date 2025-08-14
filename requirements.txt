@@ -1,0 +1,9 @@
+# Required Python Packages
+
+# LangGraph (graph orchestration & state management)
+langgraph>=0.2.0
+# Core LangChain
+langchain>=0.2.5
+# OpenAI chat model wrapper (used for ChatOpenAI)
+langchain-ollama>=0.1.0
+# (Ensure you already have fastapi, uvicorn, faiss, etc., from existing project.)
