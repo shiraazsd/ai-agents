@@ -1,0 +1,5 @@
+google-adk[eval]>=2.11
+pyyaml>=6
+requests>=2.31
+google-auth>=2.30
+pytest>=8

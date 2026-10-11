@@ -1,0 +1,4 @@
+# Read by `adk deploy`: keep eval-only files out of the deployed image.
+evals.yaml
+fixtures
+__pycache__

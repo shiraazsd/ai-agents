@@ -5,20 +5,24 @@
   mkt validate                             lint everything (CI gate)
   mkt sync                                 regenerate .claude-plugin/marketplace.json
   mkt changed <base-ref>                   skill ids touched since base
-  mkt eval [ids...] [--changed BASE]       run ADK evals (one process per skill)
+  mkt eval [ids...] [--changed BASE] [--file F]   run ADK evals (one process per eval set)
   mkt install claude|copilot [--only ...]  link skills into your local AI assistant
-  mkt bundle [out]                         build the deployable ADK agent folder
+  mkt bundle [out]                         build the deployable ADK agent folder (single-repo mode)
+  mkt pack <version>                       versioned skills tarball for agents in other repos
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 from . import catalog
@@ -112,14 +116,24 @@ def cmd_changed(a):
 
 
 def cmd_eval(a):
-    ids = a.ids or (changed(a.changed) if a.changed else [s.id for s in catalog.skills(ROOT)])
-    ids = [i for i in ids if any(s.adk_enabled for s in catalog.skills(ROOT, {i}))]
-    if not ids:
-        return print("no skills to evaluate")
+    if a.ids:
+        wanted = set(a.ids)
+        unknown = [i for i in a.ids if not catalog.skills(ROOT, {i})]
+        if unknown:
+            sys.exit(f"unknown skill or plugin: {', '.join(unknown)}")
+    elif a.changed:
+        wanted = set(changed(a.changed))
+    else:
+        wanted = set() if a.file else None  # no args at all = every skill
+    skill_ids = [s.id for s in catalog.skills(ROOT, wanted) if s.adk_enabled] if wanted != set() else []
+    targets = [[i] for i in skill_ids] + [["--file", f] for f in a.file]
+    if not targets:
+        return print("nothing to evaluate")
     if not any(os.getenv(v) for v in ("GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_ENTERPRISE")):
         sys.exit("set GOOGLE_API_KEY (free key: https://aistudio.google.com/apikey) or GOOGLE_GENAI_USE_VERTEXAI=1")
-    failed = [i for i in ids if subprocess.run([sys.executable, "-m", "skillkit.evals", i], cwd=ROOT).returncode]
-    print(f"\n{len(ids) - len(failed)}/{len(ids)} skills passed evals")
+    env = {**os.environ, "SKILLKIT_ROOT": str(ROOT), "PYTHONPATH": os.pathsep.join(filter(None, [str(ROOT), os.getenv("PYTHONPATH")]))}
+    failed = [" ".join(t) for t in targets if subprocess.run([sys.executable, "-m", "skillkit.evals", *t], env=env).returncode]
+    print(f"\n{len(targets) - len(failed)}/{len(targets)} eval sets passed")
     if failed:
         sys.exit("failed: " + ", ".join(failed))
 
@@ -207,17 +221,39 @@ def cmd_bundle(a):
     print(f"bundle ready: {out}  (deploy: adk deploy cloud_run {out} --project P --region R)")
 
 
+def cmd_pack(a):
+    """Versioned skills tarball for agents in other repos: skillkit + plugins (with evals/fixtures) + manifest."""
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    tar_path = out / f"skills-{a.version}.tar.gz"
+    manifest = json.dumps({
+        "version": a.version,
+        "commit": os.getenv("GITHUB_SHA", ""),
+        "skills": [s.id for s in catalog.skills(ROOT)],
+    }, indent=2).encode()
+    with tarfile.open(tar_path, "w:gz") as tar:
+        for src in [ROOT / "skillkit", *catalog.plugins(ROOT)]:
+            tar.add(src, arcname=src.relative_to(ROOT).as_posix(), filter=lambda ti: None if "__pycache__" in ti.name.split("/") else ti)
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        tar.addfile(info, io.BytesIO(manifest))
+    digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
+    (out / f"{tar_path.name}.sha256").write_text(f"{digest}  {tar_path.name}\n")
+    print(f"{tar_path}  sha256={digest}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mkt", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("validate").set_defaults(fn=cmd_validate)
     sub.add_parser("sync").set_defaults(fn=cmd_sync)
     p = sub.add_parser("changed"); p.add_argument("base"); p.set_defaults(fn=cmd_changed)
-    p = sub.add_parser("eval"); p.add_argument("ids", nargs="*"); p.add_argument("--changed", metavar="BASE"); p.set_defaults(fn=cmd_eval)
+    p = sub.add_parser("eval"); p.add_argument("ids", nargs="*", help="skill ids or plugin names"); p.add_argument("--changed", metavar="BASE"); p.add_argument("--file", action="append", default=[], help="extra evals.yaml (agent-level)"); p.set_defaults(fn=cmd_eval)
     p = sub.add_parser("install"); p.add_argument("target", choices=TARGETS); p.add_argument("--only", help="plugins or plugin/skill ids, comma-separated"); p.add_argument("--project", help="install into this repo instead of your home dir"); p.set_defaults(fn=cmd_install)
     p = sub.add_parser("new-team"); p.add_argument("team"); p.add_argument("--owner", required=True); p.set_defaults(fn=cmd_new_team)
     p = sub.add_parser("new-skill"); p.add_argument("plugin"); p.add_argument("skill"); p.set_defaults(fn=cmd_new_skill)
     p = sub.add_parser("bundle"); p.add_argument("out", nargs="?", default="dist"); p.set_defaults(fn=cmd_bundle)
+    p = sub.add_parser("pack"); p.add_argument("version"); p.add_argument("--out", default="dist"); p.set_defaults(fn=cmd_pack)
     a = ap.parse_args(argv)
     a.fn(a)
 

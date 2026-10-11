@@ -1,0 +1,10 @@
+# Agent-level evals: flows that span skills. Per-skill evals come from the bundle
+# and also run against this agent (with all of its skills loaded) in CI.
+fixtures: fixtures
+cases:
+  - id: incident-due-date
+    prompt: >
+      Is payments-api healthy? If not, its incident opened on Friday 2026-03-06 and must be
+      resolved within 3 business days - when is it due?
+    tools: [service_status, add_business_days]
+    response: payments-api is degraded; the incident is due on Wednesday 2026-03-11.

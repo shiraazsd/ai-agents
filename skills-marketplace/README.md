@@ -63,7 +63,7 @@ Set `metadata: {adk: false}` in the frontmatter for dev-only skills (e.g. coding
 | When | What |
 |---|---|
 | PR | `validate` (lint, CODEOWNERS coverage, offline tests) → `evals` for changed skills (all skills if `skillkit/` or the agent changed) |
-| Merge to `main` | Claude Code/Copilot users get it on next `/plugin marketplace update` / `git pull`; `deploy` bundles and ships the ADK agent to Cloud Run |
+| Merge to `main` | Claude Code/Copilot users get it on next `/plugin marketplace update` / `git pull`; `release` publishes `skills-v0.<n>.0` (tarball + sha256) for agent repos; `deploy` ships the in-repo agent (only if configured) |
 
 Evals use ADK's evaluator: tool calls must happen in order (args ignored), answers are LLM-judged for meaning.
 Override per skill with `criteria:` in `evals.yaml` (any [ADK metric](https://google.github.io/adk-docs/evaluate/)).
@@ -75,5 +75,17 @@ Override per skill with `criteria:` in `evals.yaml` (any [ADK metric](https://go
 3. Secret `GOOGLE_API_KEY` (free: <https://aistudio.google.com/apikey>) for evals.
 4. Deploy (optional): repo vars `GCP_PROJECT`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`, `GCP_RUNTIME_SA`
    ([Workload Identity Federation](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account)). The job is skipped until `GCP_PROJECT` is set.
+
+## Agents in other repos
+
+`marketplace_agent/` here is the reference agent skill evals run against. Production agents can live
+in their own repos (template: `skills-agent`): each pins a bundle in `skills.lock`, picks the plugins it
+serves, re-runs those skills' evals against itself, and upgrades via an automated PR. In that setup,
+don't set the `GCP_*` variables here; each agent repo owns its own deploy.
+
+```bash
+mkt pack v0.7.0                         # what the release workflow publishes
+mkt eval common --file my/agent.yaml    # plugin names and extra eval files are accepted
+```
 
 Auth details: [docs/auth.md](docs/auth.md).
