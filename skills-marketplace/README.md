@@ -10,7 +10,7 @@ teams/<team>/                # one plugin per team      (owned by that team)
   skills/<skill>/
     SKILL.md                 # frontmatter (name, description) + instructions
     scripts/tools.py         # optional: plain typed functions = tools
-    evals.yaml               # required: prompts + expected tools/answer
+    evals.yaml               # required for ADK skills: prompts + expected tools/answer
     fixtures/                # optional: recorded HTTP responses for offline evals
 skillkit/                    # shared runtime: auth, tool CLI, ADK loader, `mkt` CLI
 marketplace_agent/           # the ADK agent (serves every skill)
@@ -34,7 +34,7 @@ pip install "skillkit[kerberos] @ git+https://github.com/shiraazsd/skills-market
 ```bash
 pip install -e ".[dev,kerberos]"
 mkt new-team payments --owner @my-org/payments   # once per team (adds CODEOWNERS line)
-mkt new-skill payments refund-lookup             # scaffold SKILL.md, tools.py, evals.yaml
+mkt new-skill payments refund-lookup --adk       # scaffold SKILL.md, tools.py, evals.yaml (drop --adk for dev-only)
 mkt validate && pytest -q                        # lint + offline tests
 mkt eval payments/refund-lookup                  # real ADK eval (needs GOOGLE_API_KEY)
 ```
@@ -56,13 +56,27 @@ if __name__ == "__main__":
     run()          # python scripts/tools.py service_status --service payments-api
 ```
 
-Set `metadata: {adk: false}` in the frontmatter for dev-only skills (e.g. coding conventions).
+### Which skills reach the ADK agent
+
+Every skill is available in Claude Code and Copilot. Only skills that opt in are served by ADK agents:
+
+```yaml
+---
+name: service-status
+description: …
+metadata:
+  adk: true      # ADK-qualified: needs evals.yaml, is evaluated in CI, ships in releases/deploys
+---
+```
+
+Without it (e.g. `common/commit-messages`) a skill is developer-assistant only: no evals required,
+never loaded by, bundled for, or deployed to an ADK agent. `mkt new-skill <plugin> <skill> --adk` scaffolds the qualified form.
 
 ## Pipeline
 
 | When | What |
 |---|---|
-| PR | `validate` (lint, CODEOWNERS coverage, offline tests) → `evals` for changed skills (all skills if `skillkit/` or the agent changed) |
+| PR | `validate` (lint, CODEOWNERS coverage, offline tests) → `evals` for changed ADK skills (all of them if `skillkit/` or the agent changed) |
 | Merge to `main` | Claude Code/Copilot users get it on next `/plugin marketplace update` / `git pull`; `release` publishes `skills-v0.<n>.0` (tarball + sha256) for agent repos; `deploy` ships the in-repo agent (only if configured) |
 
 Evals use ADK's evaluator: tool calls must happen in order (args ignored), answers are LLM-judged for meaning.

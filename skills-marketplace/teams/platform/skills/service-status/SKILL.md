@@ -1,6 +1,8 @@
 ---
 name: service-status
 description: Look up the live health, version and on-call owner of an internal service. Use when someone asks whether a service is up, degraded, or who owns it.
+metadata:
+  adk: true
 ---
 
 # Service status

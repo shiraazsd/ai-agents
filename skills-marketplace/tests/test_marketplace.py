@@ -40,5 +40,25 @@ def test_unknown_auth_mode(monkeypatch):
 def test_adk_toolset_loads_every_skill():
     adk = pytest.importorskip("skillkit.adk")
     ts = adk.toolset(ROOT)
-    assert set(ts._skills) == {s.name for s in catalog.skills(ROOT) if s.adk_enabled}
+    assert set(ts._skills) == {"business-days", "service-status"}  # commit-messages is dev-only
     assert {"business_days", "add_business_days", "service_status"} <= set(ts._provided_tools_by_name)
+
+
+def test_adk_is_opt_in(tmp_path):
+    adk_ids = {s.id for s in catalog.skills(ROOT) if s.adk_enabled}
+    assert adk_ids == {"common/business-days", "platform/service-status"}
+    assert "common/commit-messages" in {s.id for s in catalog.skills(ROOT)}  # still a Claude Code / Copilot skill
+
+
+def test_dev_only_skills_never_ship_to_adk(tmp_path, monkeypatch):
+    import tarfile
+
+    from skillkit import cli
+
+    cli.cmd_pack(type("A", (), {"version": "v0.0.0", "out": str(tmp_path)}))
+    names = tarfile.open(tmp_path / "skills-v0.0.0.tar.gz").getnames()
+    assert any(n.startswith("common/skills/business-days") for n in names)
+    assert not any("commit-messages" in n for n in names)
+
+    cli.cmd_bundle(type("A", (), {"out": str(tmp_path / "dist")}))
+    assert not (tmp_path / "dist/marketplace_agent/common/skills/commit-messages").exists()

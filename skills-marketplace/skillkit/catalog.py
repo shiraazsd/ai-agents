@@ -33,7 +33,8 @@ class Skill:
 
     @property
     def adk_enabled(self) -> bool:
-        return (self.meta.get("metadata") or {}).get("adk", True) is not False
+        """Opt-in: only skills with `metadata: {adk: true}` are served by ADK agents (and evaluated/released)."""
+        return str((self.meta.get("metadata") or {}).get("adk", "")).lower() == "true"
 
 
 def parse_skill_md(path: Path) -> tuple[dict, str]:

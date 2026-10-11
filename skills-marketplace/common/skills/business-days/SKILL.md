@@ -1,6 +1,8 @@
 ---
 name: business-days
 description: Count business days (Mon-Fri) between dates or find the date N business days away. Use for SLAs, due dates and "working days" questions.
+metadata:
+  adk: true
 ---
 
 # Business days

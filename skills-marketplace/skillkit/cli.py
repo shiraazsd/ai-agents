@@ -1,7 +1,7 @@
 """mkt — marketplace tooling. Run `mkt -h`.
 
   mkt new-team <team> --owner @org/team    scaffold teams/<team> + CODEOWNERS entry
-  mkt new-skill <plugin> <skill>           scaffold a skill
+  mkt new-skill <plugin> <skill> [--adk]   scaffold a skill (--adk: also served by ADK agents)
   mkt validate                             lint everything (CI gate)
   mkt sync                                 regenerate .claude-plugin/marketplace.json
   mkt changed <base-ref>                   skill ids touched since base
@@ -81,9 +81,12 @@ def problems() -> list[str]:
         if s.name in seen_skills:
             errs.append(f"{where}: skill name clashes with {seen_skills[s.name]} (names are global in ADK)")
         seen_skills[s.name] = where
-        if not s.evals_file.is_file():
-            errs.append(f"{where}: missing evals.yaml")
-        if s.tools_file.is_file():
+        adk_flag = (s.meta.get("metadata") or {}).get("adk")
+        if adk_flag is not None and str(adk_flag).lower() not in ("true", "false"):
+            errs.append(f"{where}: metadata.adk must be true or false")
+        if s.adk_enabled and not s.evals_file.is_file():
+            errs.append(f"{where}: ADK skills need evals.yaml")
+        if s.adk_enabled and s.tools_file.is_file():  # ADK registers all tools in one namespace
             for tool in re.findall(r"^def ([a-z][a-z0-9_]*)\(", s.tools_file.read_text(), re.M):
                 if tool in seen_tools:
                     errs.append(f"{where}: tool '{tool}' clashes with {seen_tools[tool]}")
@@ -121,6 +124,9 @@ def cmd_eval(a):
         unknown = [i for i in a.ids if not catalog.skills(ROOT, {i})]
         if unknown:
             sys.exit(f"unknown skill or plugin: {', '.join(unknown)}")
+        not_adk = [i for i in a.ids if not any(s.adk_enabled for s in catalog.skills(ROOT, {i}))]
+        if not_adk:
+            sys.exit(f"not ADK skills (add `metadata: {{adk: true}}`): {', '.join(not_adk)}")
     elif a.changed:
         wanted = set(changed(a.changed))
     else:
@@ -161,7 +167,7 @@ def cmd_install(a):
 SKILL_MD = """---
 name: {name}
 description: TODO — what this does and when to use it (the model reads this to decide).
----
+{adk}---
 
 # {title}
 
@@ -181,6 +187,7 @@ def example(text: str) -> dict:
 if __name__ == "__main__":
     run()
 '''
+ADK_META = "metadata:\n  adk: true   # served by ADK agents; requires evals.yaml\n"
 EVALS_YAML = """cases:
   - prompt: TODO a realistic user request
     tools: [example]
@@ -203,37 +210,49 @@ def cmd_new_skill(a):
     (plugin_dir,) = [p for p in catalog.plugins(ROOT) if p.name == a.plugin]
     d = plugin_dir / "skills" / a.skill
     (d / "scripts").mkdir(parents=True)
-    (d / "SKILL.md").write_text(SKILL_MD.format(name=a.skill, title=a.skill.replace("-", " ").title()))
+    (d / "SKILL.md").write_text(SKILL_MD.format(name=a.skill, title=a.skill.replace("-", " ").title(), adk=ADK_META if a.adk else ""))
     (d / "scripts" / "tools.py").write_text(TOOLS_PY.format(name=a.skill))
-    (d / "evals.yaml").write_text(EVALS_YAML)
-    print(f"created {d.relative_to(ROOT)}")
+    if a.adk:
+        (d / "evals.yaml").write_text(EVALS_YAML)
+    print(f"created {d.relative_to(ROOT)}" + (" (ADK-qualified)" if a.adk else " (Claude Code / Copilot only; add --adk to qualify)"))
 
 
-# ---------------------------------------------------------------- deploy bundle
+# ---------------------------------------------------------------- deploy bundle / release
+def adk_payload() -> list[Path]:
+    """What ADK agents get: plugin manifests + ADK-qualified skill folders (never dev-only skills)."""
+    skills = [s for s in catalog.skills(ROOT) if s.adk_enabled]
+    plugins = sorted({s.path.parent.parent for s in skills})
+    return [p / ".claude-plugin" for p in plugins] + [s.path for s in skills]
+
+
+def _no_pycache(ti):
+    return None if "__pycache__" in ti.name.split("/") else ti
+
+
 def cmd_bundle(a):
     out = Path(a.out) / "marketplace_agent"
     shutil.rmtree(out, ignore_errors=True)
     shutil.copytree(ROOT / "marketplace_agent", out, ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(ROOT / "skillkit", out / "skillkit", ignore=shutil.ignore_patterns("__pycache__"))
-    for p in catalog.plugins(ROOT):
-        shutil.copytree(p, out / p.relative_to(ROOT), ignore=shutil.ignore_patterns("__pycache__", "evals.yaml", "fixtures"))
+    for src in adk_payload():
+        shutil.copytree(src, out / src.relative_to(ROOT), ignore=shutil.ignore_patterns("__pycache__", "evals.yaml", "fixtures"))
     (out / "requirements.txt").write_text("google-adk>=2.11\npyyaml>=6\nrequests>=2.31\ngoogle-auth>=2.30\n")
     print(f"bundle ready: {out}  (deploy: adk deploy cloud_run {out} --project P --region R)")
 
 
 def cmd_pack(a):
-    """Versioned skills tarball for agents in other repos: skillkit + plugins (with evals/fixtures) + manifest."""
+    """Versioned tarball for agents in other repos: skillkit + ADK skills (with evals/fixtures) + manifest."""
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     tar_path = out / f"skills-{a.version}.tar.gz"
     manifest = json.dumps({
         "version": a.version,
         "commit": os.getenv("GITHUB_SHA", ""),
-        "skills": [s.id for s in catalog.skills(ROOT)],
+        "skills": [s.id for s in catalog.skills(ROOT) if s.adk_enabled],
     }, indent=2).encode()
     with tarfile.open(tar_path, "w:gz") as tar:
-        for src in [ROOT / "skillkit", *catalog.plugins(ROOT)]:
-            tar.add(src, arcname=src.relative_to(ROOT).as_posix(), filter=lambda ti: None if "__pycache__" in ti.name.split("/") else ti)
+        for src in [ROOT / "skillkit", *adk_payload()]:
+            tar.add(src, arcname=src.relative_to(ROOT).as_posix(), filter=_no_pycache)
         info = tarfile.TarInfo("manifest.json")
         info.size = len(manifest)
         tar.addfile(info, io.BytesIO(manifest))
@@ -251,7 +270,7 @@ def main(argv=None):
     p = sub.add_parser("eval"); p.add_argument("ids", nargs="*", help="skill ids or plugin names"); p.add_argument("--changed", metavar="BASE"); p.add_argument("--file", action="append", default=[], help="extra evals.yaml (agent-level)"); p.set_defaults(fn=cmd_eval)
     p = sub.add_parser("install"); p.add_argument("target", choices=TARGETS); p.add_argument("--only", help="plugins or plugin/skill ids, comma-separated"); p.add_argument("--project", help="install into this repo instead of your home dir"); p.set_defaults(fn=cmd_install)
     p = sub.add_parser("new-team"); p.add_argument("team"); p.add_argument("--owner", required=True); p.set_defaults(fn=cmd_new_team)
-    p = sub.add_parser("new-skill"); p.add_argument("plugin"); p.add_argument("skill"); p.set_defaults(fn=cmd_new_skill)
+    p = sub.add_parser("new-skill"); p.add_argument("plugin"); p.add_argument("skill"); p.add_argument("--adk", action="store_true", help="qualify for ADK agents (adds metadata + evals.yaml)"); p.set_defaults(fn=cmd_new_skill)
     p = sub.add_parser("bundle"); p.add_argument("out", nargs="?", default="dist"); p.set_defaults(fn=cmd_bundle)
     p = sub.add_parser("pack"); p.add_argument("version"); p.add_argument("--out", default="dist"); p.set_defaults(fn=cmd_pack)
     a = ap.parse_args(argv)

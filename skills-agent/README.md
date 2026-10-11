@@ -1,6 +1,6 @@
 # Support Agent
 
-A Google ADK agent that serves a pinned selection of skills from the
+A Google ADK agent that serves a pinned selection of ADK-qualified skills (`metadata: {adk: true}`) from the
 [skills marketplace](https://github.com/shiraazsd/skills-marketplace). Skills are owned and
 evaluated there; this repo decides **which** skills, **which version**, and **how** the agent runs.
 
