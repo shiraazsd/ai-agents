@@ -1,0 +1,39 @@
+name: deploy
+# Claude Code / Copilot consume the marketplace straight from `main`; this job
+# ships the same skills to the ADK agent on Cloud Run. Inert until vars are set.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  adk-agent:
+    if: vars.GCP_PROJECT != ''
+    runs-on: ubuntu-latest
+    permissions: { contents: read, id-token: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -e ".[adk]"
+      - run: mkt validate
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: mkt bundle dist
+      - run: >
+          adk deploy cloud_run dist/marketplace_agent
+          --project ${{ vars.GCP_PROJECT }}
+          --region ${{ vars.GCP_REGION || 'us-central1' }}
+          --service_name skills-agent
+          --env SKILLKIT_AUTH=${{ vars.SKILLKIT_AUTH || 'oidc' }}
+          --env GOOGLE_GENAI_USE_VERTEXAI=TRUE
+          --env GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT }}
+          --env GOOGLE_CLOUD_LOCATION=${{ vars.GCP_REGION || 'us-central1' }}
+          --
+          --no-allow-unauthenticated
+          --service-account=${{ vars.GCP_RUNTIME_SA }}
