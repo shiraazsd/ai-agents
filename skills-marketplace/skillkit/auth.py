@@ -9,9 +9,11 @@ and the provider is picked by the runtime, not the skill:
 
     SKILLKIT_AUTH=kerberos  SPNEGO with the current ticket cache (developer `kinit`),
                             or a keytab via KRB5_CLIENT_KTNAME (service account).
+    SKILLKIT_AUTH=sigv4     AWS SigV4 with the runtime's IAM role (AgentCore Runtime), e.g. API Gateway IAM auth.
+                            Service from SKILLKIT_SIGV4_SERVICE (default execute-api), region from AWS_REGION.
     SKILLKIT_AUTH=oidc      Google-signed ID token for `audience` (Cloud Run / Agent Engine / GKE).
     SKILLKIT_AUTH=none      No auth.
-    SKILLKIT_AUTH=auto      (default) oidc on Cloud Run, kerberos elsewhere.
+    SKILLKIT_AUTH=auto      (default) oidc on Cloud Run, kerberos elsewhere. Deployments set it explicitly.
 
 SKILLKIT_HTTP_FIXTURES=<dir> replaces the network with recorded responses (used by evals).
 Register more providers with @provider("name").
@@ -70,6 +72,31 @@ def _oidc(s: requests.Session, audience: Optional[str]) -> None:
     if not audience:
         raise ValueError("oidc auth needs an audience, e.g. session(audience='https://svc')")
     s.auth = _OidcAuth(audience)
+
+
+class _SigV4Auth(requests.auth.AuthBase):
+    def __init__(self, service: str, region: str):
+        self.service, self.region = service, region
+
+    def __call__(self, r):
+        import boto3
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
+
+        creds = boto3.Session().get_credentials().get_frozen_credentials()
+        signed = AWSRequest(method=r.method, url=r.url, data=r.body, headers={"Content-Type": r.headers.get("Content-Type", "")} if r.body else {})
+        SigV4Auth(creds, self.service, self.region).add_auth(signed)
+        r.headers.update(dict(signed.headers))
+        return r
+
+
+@provider("sigv4")
+def _sigv4(s: requests.Session, audience: Optional[str]) -> None:
+    try:
+        import boto3  # noqa: F401
+    except ImportError as e:
+        raise RuntimeError("SigV4 auth needs: pip install 'skillkit[aws]'") from e
+    s.auth = _SigV4Auth(os.getenv("SKILLKIT_SIGV4_SERVICE", "execute-api"), os.getenv("AWS_REGION", "us-east-1"))
 
 
 def _auto() -> str:

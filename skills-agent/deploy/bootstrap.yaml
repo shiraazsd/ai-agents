@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  One-time setup for the support agent: ECR repository for the AgentCore image, and an IAM role
+  that GitHub Actions on the agent repo's main branch assumes to deploy (no long-lived keys).
+  aws cloudformation deploy --template-file deploy/bootstrap.yaml --stack-name support-agent-bootstrap
+    --capabilities CAPABILITY_NAMED_IAM --parameter-overrides GitHubRepo=<owner>/skills-agent
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: owner/name of the agent repo
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "false if this AWS account already has the token.actions.githubusercontent.com provider"
+  StackName:
+    Type: String
+    Default: support-agent
+    Description: Name of the runtime stack the deploy role may manage
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  ImageRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref StackName
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:  # keep storage (and cost) bounded
+        LifecyclePolicyText: |
+          {"rules": [{"rulePriority": 1, "description": "keep last 5 images",
+            "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 5},
+            "action": {"type": "expire"}}]}
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${StackName}-github-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [cloudformation:*]
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${StackName}/*
+              - Effect: Allow
+                Action: [ecr:GetAuthorizationToken]
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt ImageRepo.Arn
+              - Effect: Allow  # the runtime and the workload identity AgentCore creates for it
+                Action: [bedrock-agentcore:*]
+                Resource: "*"
+              - Effect: Allow  # the runtime's execution role (created by the runtime stack)
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${StackName}-*
+              - Effect: Allow  # AgentCore creates its service-linked role on first use
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName: "*bedrock-agentcore*"
+
+Outputs:
+  DeployRoleArn:
+    Description: Set as the agent repo's AWS_DEPLOY_ROLE_ARN variable
+    Value: !GetAtt DeployRole.Arn
+  ImageRepoUri:
+    Description: Set as the agent repo's ECR_REPOSITORY_URI variable
+    Value: !GetAtt ImageRepo.RepositoryUri

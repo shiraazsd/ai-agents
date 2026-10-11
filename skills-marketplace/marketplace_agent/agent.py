@@ -15,11 +15,11 @@ sys.path.insert(0, str(ROOT))  # makes `skillkit` importable from bundled copies
 
 from google.adk.agents import Agent  # noqa: E402
 
-from skillkit.adk import toolset  # noqa: E402
+from skillkit.adk import model, toolset  # noqa: E402
 
 root_agent = Agent(
     name="marketplace_agent",
-    model=os.getenv("AGENT_MODEL", "gemini-flash-latest"),
+    model=model(),
     instruction=(
         "You help users by applying the available skills. Load the matching skill before acting, "
         "follow its instructions, and use its tools rather than guessing values."

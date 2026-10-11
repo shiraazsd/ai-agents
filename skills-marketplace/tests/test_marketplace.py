@@ -62,3 +62,23 @@ def test_dev_only_skills_never_ship_to_adk(tmp_path, monkeypatch):
 
     cli.cmd_bundle(type("A", (), {"out": str(tmp_path / "dist")}))
     assert not (tmp_path / "dist/marketplace_agent/common/skills/commit-messages").exists()
+
+
+def test_sigv4_signs_with_runtime_credentials(monkeypatch):
+    pytest.importorskip("boto3")
+    monkeypatch.setenv("SKILLKIT_AUTH", "sigv4")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    req = session().prepare_request(__import__("requests").Request("GET", "https://api.example.com/v1/x?q=1"))
+    auth = req.headers["Authorization"]
+    assert auth.startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
+    assert "/eu-west-1/execute-api/aws4_request" in auth and "X-Amz-Date" in req.headers
+
+
+def test_model_resolution():
+    adk = pytest.importorskip("skillkit.adk")
+    assert adk.model("gemini-flash-latest") == "gemini-flash-latest"
+    assert adk.model("projects/p/locations/l/publishers/google/models/gemini-x").startswith("projects/")
+    if __import__("importlib").util.find_spec("litellm"):
+        assert type(adk.model("bedrock/some-model")).__name__ == "LiteLlm"

@@ -27,7 +27,7 @@ pip install "skillkit[kerberos] @ git+https://github.com/shiraazsd/skills-market
 | Claude Code | `/plugin marketplace add shiraazsd/skills-marketplace` then `/plugin install common@skills-marketplace` |
 | Copilot / any SKILL.md client | clone, then `mkt install copilot` (→ `~/.copilot/skills`) or `mkt install copilot --project .` (→ `.github/skills`) |
 | Claude Code without plugins | `mkt install claude [--only common,platform]` |
-| ADK (local) | `GOOGLE_API_KEY=… adk web .` and pick `marketplace_agent` |
+| ADK (local) | `GOOGLE_API_KEY=… adk web .` and pick `marketplace_agent` (`AGENT_MODEL=bedrock/…` etc. via LiteLLM) |
 
 ## Contribute
 
@@ -77,7 +77,7 @@ never loaded by, bundled for, or deployed to an ADK agent. `mkt new-skill <plugi
 | When | What |
 |---|---|
 | PR | `validate` (lint, CODEOWNERS coverage, offline tests) → `evals` for changed ADK skills (all of them if `skillkit/` or the agent changed) |
-| Merge to `main` | Claude Code/Copilot users get it on next `/plugin marketplace update` / `git pull`; `release` publishes `skills-v0.<n>.0` (tarball + sha256) for agent repos; `deploy` ships the in-repo agent (only if configured) |
+| Merge to `main` | Claude Code/Copilot users get it on next `/plugin marketplace update` / `git pull`; `release` publishes `skills-v0.<n>.0` (tarball + sha256); agent repos pin it and deploy (Bedrock AgentCore Runtime in the `skills-agent` template) |
 
 Evals use ADK's evaluator: tool calls must happen in order (args ignored), answers are LLM-judged for meaning.
 Override per skill with `criteria:` in `evals.yaml` (any [ADK metric](https://google.github.io/adk-docs/evaluate/)).
@@ -87,15 +87,13 @@ Override per skill with `criteria:` in `evals.yaml` (any [ADK metric](https://go
 1. Branch protection on `main`: require PR, **require Code Owner review**, require `validate` + `evals` checks.
 2. Replace `@shiraazsd` in `.github/CODEOWNERS` with real teams.
 3. Secret `GOOGLE_API_KEY` (free: <https://aistudio.google.com/apikey>) for evals.
-4. Deploy (optional): repo vars `GCP_PROJECT`, `GCP_REGION`, `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`, `GCP_RUNTIME_SA`
-   ([Workload Identity Federation](https://github.com/google-github-actions/auth#workload-identity-federation-through-a-service-account)). The job is skipped until `GCP_PROJECT` is set.
 
 ## Agents in other repos
 
-`marketplace_agent/` here is the reference agent skill evals run against. Production agents can live
-in their own repos (template: `skills-agent`): each pins a bundle in `skills.lock`, picks the plugins it
-serves, re-runs those skills' evals against itself, and upgrades via an automated PR. In that setup,
-don't set the `GCP_*` variables here; each agent repo owns its own deploy.
+`marketplace_agent/` here is the reference agent skill evals run against; it is not deployed. Production
+agents live in their own repos (template: `skills-agent`, deploys to Bedrock AgentCore Runtime): each pins a bundle in
+`skills.lock`, picks the plugins it serves, re-runs those skills' evals against itself, upgrades via an
+automated PR, and owns its deploy.
 
 ```bash
 mkt pack v0.7.0                         # what the release workflow publishes

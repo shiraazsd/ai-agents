@@ -18,11 +18,11 @@ sys.path.insert(0, str(SKILLS_ROOT))
 
 from google.adk.agents import Agent  # noqa: E402
 
-from skillkit.adk import toolset  # noqa: E402
+from skillkit.adk import model, toolset  # noqa: E402
 
 root_agent = Agent(
     name="support_agent",
-    model=os.getenv("AGENT_MODEL", "gemini-flash-latest"),
+    model=model(),  # AGENT_MODEL: gemini-* (native) or e.g. bedrock/<id> via LiteLLM
     instruction=(
         "You are the internal support assistant. Load the matching skill before acting, "
         "follow its instructions, and use its tools rather than guessing values."

@@ -26,6 +26,17 @@ def _load_module(skill: catalog.Skill):
     return module
 
 
+def model(name: str | None = None):
+    """AGENT_MODEL: a Gemini name (native) or a LiteLLM id with a provider prefix,
+    e.g. "bedrock/<model id from the Bedrock console>" or "anthropic/claude-haiku-5-5"."""
+    name = name or os.getenv("AGENT_MODEL", "gemini-flash-latest")
+    if "/" not in name or name.startswith(("gemini", "projects/", "models/")):
+        return name  # native Gemini (AI Studio or Vertex)
+    from google.adk.models.lite_llm import LiteLlm  # needs `pip install litellm`
+
+    return LiteLlm(model=name)
+
+
 def toolset(root: Path, only: set[str] | None = None) -> SkillToolset:
     """Build a SkillToolset from every ADK-enabled skill under `root`.
 

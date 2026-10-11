@@ -237,7 +237,7 @@ def cmd_bundle(a):
     for src in adk_payload():
         shutil.copytree(src, out / src.relative_to(ROOT), ignore=shutil.ignore_patterns("__pycache__", "evals.yaml", "fixtures"))
     (out / "requirements.txt").write_text("google-adk>=2.11\npyyaml>=6\nrequests>=2.31\ngoogle-auth>=2.30\n")
-    print(f"bundle ready: {out}  (deploy: adk deploy cloud_run {out} --project P --region R)")
+    print(f"bundle ready: {out}  (run locally: adk web {out.parent})")
 
 
 def cmd_pack(a):
