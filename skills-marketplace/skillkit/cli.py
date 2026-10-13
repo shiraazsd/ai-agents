@@ -254,7 +254,7 @@ def cmd_pack(a):
         for src in [ROOT / "skillkit", *adk_payload()]:
             tar.add(src, arcname=src.relative_to(ROOT).as_posix(), filter=_no_pycache)
         info = tarfile.TarInfo("manifest.json")
-        info.size = len(manifest)
+        info.size, info.mtime = len(manifest), int(__import__("time").time())
         tar.addfile(info, io.BytesIO(manifest))
     digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
     (out / f"{tar_path.name}.sha256").write_text(f"{digest}  {tar_path.name}\n")

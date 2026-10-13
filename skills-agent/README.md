@@ -51,8 +51,15 @@ policy to the listed roles; billing data lags by hours, so it is a brake, not a 
 
 ```bash
 aws cloudformation deploy --template-file deploy/budget.yaml --stack-name support-agent-budget \
-  --capabilities CAPABILITY_IAM --parameter-overrides LimitUsd=5 AlertEmail=<you@example.com> \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LimitUsd=5 AlertEmail=<you@example.com> \
   DenyRoleNames=support-agent-runtime,support-agent-github-deploy   # omit DenyRoleNames for alerts only
+```
+
+No Docker? Build the arm64 image in AWS CodeBuild instead (one-time stack, then one command per build):
+
+```bash
+aws cloudformation deploy --template-file deploy/build.yaml --stack-name support-agent-build --capabilities CAPABILITY_NAMED_IAM
+python deploy/build.py --tag v1        # zips deploy/ + support_agent/ (with fetched skills), builds, pushes; prints the image URI
 ```
 
 Set repo variables from the bootstrap outputs: `AWS_DEPLOY_ROLE_ARN`, `ECR_REPOSITORY_URI`, `AWS_REGION`

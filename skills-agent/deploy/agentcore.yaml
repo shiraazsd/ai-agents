@@ -141,6 +141,7 @@ Resources:
         - !Ref AWS::NoValue
       EnvironmentVariables:
         AGENT_MODEL: !Ref AgentModel
+        AWS_REGION_NAME: !Ref AWS::Region  # region for Bedrock calls via LiteLLM
         SKILLKIT_AUTH: !Ref SkillkitAuth
         GOOGLE_API_KEY_PARAM: !Ref GoogleApiKeyParam
         KEYTAB_SECRET_ARN: !Ref KeytabSecretArn
