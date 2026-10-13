@@ -65,11 +65,11 @@ python deploy/build.py --tag v1        # zips deploy/ + support_agent/ (with fet
 Set repo variables from the bootstrap outputs: `AWS_DEPLOY_ROLE_ARN`, `ECR_REPOSITORY_URI`, `AWS_REGION`
 (optional: `AGENT_MODEL`, `SKILLKIT_AUTH`). Every merge to `main` then deploys.
 
-Call it (IAM/SigV4 by default; session ids must be ≥ 33 chars and keep conversation context):
+Test it (IAM/SigV4 by default; anyone with `bedrock-agentcore:InvokeAgentRuntime` on the runtime):
 
 ```bash
-aws bedrock-agentcore invoke-agent-runtime --agent-runtime-arn <AgentRuntimeArn output> \
-  --runtime-session-id "$(uuidgen)-$(uuidgen)" --payload '{"prompt": "Is payments-api up?"}' out.json
+python scripts/ask.py "How many business days are in February 2026?"   # one question, shows tool calls
+python scripts/ask.py                                                   # interactive; follow-ups share a session
 ```
 
 Options in `deploy/agentcore.yaml` (set once with `aws cloudformation deploy … --parameter-overrides`; later deploys keep them):
