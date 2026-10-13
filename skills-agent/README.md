@@ -68,8 +68,8 @@ Set repo variables from the bootstrap outputs: `AWS_DEPLOY_ROLE_ARN`, `ECR_REPOS
 Test it (IAM/SigV4 by default; anyone with `bedrock-agentcore:InvokeAgentRuntime` on the runtime):
 
 ```bash
-python scripts/ask.py "How many business days are in February 2026?"   # one question, shows tool calls
-python scripts/ask.py                                                   # interactive; follow-ups share a session
+python scripts/ask.py                     # interactive REPL: /new /tools /session /help /exit, arrow-key history
+python scripts/ask.py "question"          # one-shot, for scripts
 ```
 
 Options in `deploy/agentcore.yaml` (set once with `aws cloudformation deploy … --parameter-overrides`; later deploys keep them):
