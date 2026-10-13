@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Monthly cost budget for the account with email alerts. When DenyRoleNames is set, AWS Budgets
+  automatically attaches a deny-all policy to those roles once ACTUAL spend reaches 100%
+  (billing data lags by hours, so this is a brake, not a real-time cap).
+
+Parameters:
+  LimitUsd:
+    Type: Number
+    Default: 5
+  AlertEmail:
+    Type: String
+  DenyRoleNames:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: IAM role names to block at 100%, e.g. support-agent-runtime,support-agent-github-deploy,support-agent-build
+
+Conditions:
+  HasRoles: !Not [!Equals [!Join ["", !Ref DenyRoleNames], ""]]
+
+Resources:
+  Budget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub ${AWS::StackName}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref LimitUsd, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 50, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+  DenyAllPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasRoles
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-deny-all
+      Description: Attached by AWS Budgets when the monthly limit is exceeded. Detach to restore access.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Deny
+            Action: "*"
+            Resource: "*"
+
+  BudgetActionRole:
+    Type: AWS::IAM::Role
+    Condition: HasRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: budgets.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }
+      Policies:
+        - PolicyName: attach-deny-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [iam:AttachRolePolicy, iam:DetachRolePolicy]
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/*
+                Condition:
+                  ArnEquals: { iam:PolicyARN: !Ref DenyAllPolicy }
+
+  BlockAtLimit:
+    Type: AWS::Budgets::BudgetsAction
+    Condition: HasRoles
+    Properties:
+      BudgetName: !Ref Budget
+      NotificationType: ACTUAL
+      ActionType: APPLY_IAM_POLICY
+      ActionThreshold: { Type: PERCENTAGE, Value: 100 }
+      ApprovalModel: AUTOMATIC
+      ExecutionRoleArn: !GetAtt BudgetActionRole.Arn
+      Definition:
+        IamActionDefinition:
+          PolicyArn: !Ref DenyAllPolicy
+          Roles: !Ref DenyRoleNames
+      Subscribers: [{ Type: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  BudgetName:
+    Value: !Ref Budget

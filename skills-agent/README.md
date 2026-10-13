@@ -46,6 +46,15 @@ aws cloudformation deploy --template-file deploy/bootstrap.yaml --stack-name sup
 aws ssm put-parameter --name /support-agent/google-api-key --type SecureString --value '<gemini key>'
 ```
 
+Cost guardrail (account-wide monthly budget; at 100% of actual spend AWS Budgets attaches a deny-all
+policy to the listed roles; billing data lags by hours, so it is a brake, not a real-time cap):
+
+```bash
+aws cloudformation deploy --template-file deploy/budget.yaml --stack-name support-agent-budget \
+  --capabilities CAPABILITY_IAM --parameter-overrides LimitUsd=5 AlertEmail=<you@example.com> \
+  DenyRoleNames=support-agent-runtime,support-agent-github-deploy   # omit DenyRoleNames for alerts only
+```
+
 Set repo variables from the bootstrap outputs: `AWS_DEPLOY_ROLE_ARN`, `ECR_REPOSITORY_URI`, `AWS_REGION`
 (optional: `AGENT_MODEL`, `SKILLKIT_AUTH`). Every merge to `main` then deploys.
 
