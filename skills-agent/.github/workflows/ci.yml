@@ -1,0 +1,35 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  GH_TOKEN: ${{ secrets.SKILLS_TOKEN }}   # read access to the (private) marketplace releases
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: python scripts/skills.py fetch
+      - run: pytest -q
+
+  evals:
+    # The pinned skills' evals + agent-level evals, run against THIS agent with all its skills loaded
+    # (catches skill-routing conflicts that per-skill evals in the marketplace can't see).
+    needs: test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: python scripts/skills.py fetch
+      - run: scripts/eval.sh

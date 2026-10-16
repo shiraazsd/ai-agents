@@ -1,0 +1,4 @@
+# Which marketplace bundle this agent runs. Bumped by PR (see .github/workflows/bump-skills.yml).
+repo: shiraazsd/skills-marketplace
+version: v0.1.0
+sha256: 0000000000000000000000000000000000000000000000000000000000000000  # placeholder: run `python scripts/skills.py bump` after the first marketplace release

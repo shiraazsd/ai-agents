@@ -1,0 +1,6 @@
+# Replace @shiraazsd with real GitHub teams (e.g. @my-org/platform). Every plugin
+# folder must have an entry — `mkt validate` enforces it, branch protection
+# ("Require review from Code Owners") makes it binding.
+* @shiraazsd
+/common/ @shiraazsd
+/teams/platform/ @shiraazsd

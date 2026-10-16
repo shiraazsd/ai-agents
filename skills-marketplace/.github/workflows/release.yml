@@ -1,0 +1,28 @@
+name: release
+# Publishes a versioned skills bundle (GitHub Release) on every merge to main.
+# Agents in other repos pin a version in their skills.lock and upgrade via PR.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: release
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -e .
+      - run: mkt validate
+      - id: v
+        run: echo "version=v0.${{ github.run_number }}.0" >> "$GITHUB_OUTPUT"
+      - run: mkt pack ${{ steps.v.outputs.version }} --out dist
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: >
+          gh release create skills-${{ steps.v.outputs.version }} dist/*
+          --title "Skills ${{ steps.v.outputs.version }}"
+          --notes "Skills bundle from ${{ github.sha }}. Pin it in an agent repo's skills.lock."

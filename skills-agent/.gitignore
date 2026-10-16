@@ -1,0 +1,5 @@
+support_agent/_skills/
+__pycache__/
+.venv/
+.env
+.adk/

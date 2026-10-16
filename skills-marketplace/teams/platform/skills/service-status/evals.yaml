@@ -1,0 +1,10 @@
+# Runs offline: HTTP calls are served from ./fixtures (see skillkit/auth.py).
+cases:
+  - id: degraded
+    prompt: Is payments-api healthy right now?
+    tools: [service_status]
+    response: payments-api is degraded (version 4.12.1); on-call is @alice, incident https://status.internal.example.com/inc/812.
+  - id: unknown
+    prompt: What's the status of the flux-capacitor service?
+    tools: [service_status]
+    response: There is no service called flux-capacitor.

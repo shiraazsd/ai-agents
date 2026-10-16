@@ -1,0 +1,9 @@
+cases:
+  - id: count
+    prompt: How many working days are there from 2026-01-05 up to (not including) 2026-01-19?
+    tools: [business_days]
+    response: There are 10 business days.
+  - id: due-date
+    prompt: A ticket opened on Friday 2026-03-06 has a 3 business day SLA. When is it due?
+    tools: [add_business_days]
+    response: It is due on Wednesday 2026-03-11.

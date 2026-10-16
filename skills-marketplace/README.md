@@ -1,0 +1,103 @@
+# Skills Marketplace
+
+One folder of [Agent Skills](https://agentskills.io) (`SKILL.md` + optional Python tools), usable from
+**Claude Code**, **GitHub Copilot**, and a deployed **Google ADK** agent, with evals gating every PR.
+
+```
+common/                      # org-wide skills          (owned by platform, see CODEOWNERS)
+teams/<team>/                # one plugin per team      (owned by that team)
+  .claude-plugin/plugin.json
+  skills/<skill>/
+    SKILL.md                 # frontmatter (name, description) + instructions
+    scripts/tools.py         # optional: plain typed functions = tools
+    evals.yaml               # required for ADK skills: prompts + expected tools/answer
+    fixtures/                # optional: recorded HTTP responses for offline evals
+skillkit/                    # shared runtime: auth, tool CLI, ADK loader, `mkt` CLI
+marketplace_agent/           # the ADK agent (serves every skill)
+```
+
+## Use the skills
+
+```bash
+pip install "skillkit[kerberos] @ git+https://github.com/shiraazsd/skills-marketplace"   # once; tools import it
+```
+
+| Assistant | Install |
+|---|---|
+| Claude Code | `/plugin marketplace add shiraazsd/skills-marketplace` then `/plugin install common@skills-marketplace` |
+| Copilot / any SKILL.md client | clone, then `mkt install copilot` (→ `~/.copilot/skills`) or `mkt install copilot --project .` (→ `.github/skills`) |
+| Claude Code without plugins | `mkt install claude [--only common,platform]` |
+| ADK (local) | `GOOGLE_API_KEY=… adk web .` and pick `marketplace_agent` (`AGENT_MODEL=bedrock/…` etc. via LiteLLM) |
+
+## Contribute
+
+```bash
+pip install -e ".[dev,kerberos]"
+mkt new-team payments --owner @my-org/payments   # once per team (adds CODEOWNERS line)
+mkt new-skill payments refund-lookup --adk       # scaffold SKILL.md, tools.py, evals.yaml (drop --adk for dev-only)
+mkt validate && pytest -q                        # lint + offline tests
+mkt eval payments/refund-lookup                  # real ADK eval (needs GOOGLE_API_KEY)
+```
+
+Rules (enforced by `mkt validate`): folder name = skill `name`; description says *when* to use it;
+skill and tool names are unique across the marketplace; every plugin has a CODEOWNERS owner;
+`marketplace.json` is regenerated with `mkt sync`.
+
+A tool is just a function. The same file works as an ADK tool and as a shell command:
+
+```python
+from skillkit import run, session
+
+def service_status(service: str) -> dict:
+    """Get health and on-call for an internal service."""
+    return session(audience=API).get(f"{API}/services/{service}").json()
+
+if __name__ == "__main__":
+    run()          # python scripts/tools.py service_status --service payments-api
+```
+
+### Which skills reach the ADK agent
+
+Every skill is available in Claude Code and Copilot. Only skills that opt in are served by ADK agents:
+
+```yaml
+---
+name: service-status
+description: …
+metadata:
+  adk: true      # ADK-qualified: needs evals.yaml, is evaluated in CI, ships in releases/deploys
+---
+```
+
+Without it (e.g. `common/commit-messages`) a skill is developer-assistant only: no evals required,
+never loaded by, bundled for, or deployed to an ADK agent. `mkt new-skill <plugin> <skill> --adk` scaffolds the qualified form.
+
+## Pipeline
+
+| When | What |
+|---|---|
+| PR | `validate` (lint, CODEOWNERS coverage, offline tests) → `evals` for changed ADK skills (all of them if `skillkit/` or the agent changed) |
+| Merge to `main` | Claude Code/Copilot users get it on next `/plugin marketplace update` / `git pull`; `release` publishes `skills-v0.<n>.0` (tarball + sha256); agent repos pin it and deploy (Bedrock AgentCore Runtime in the `skills-agent` template) |
+
+Evals use ADK's evaluator: tool calls must happen in order (args ignored), answers are LLM-judged for meaning.
+Override per skill with `criteria:` in `evals.yaml` (any [ADK metric](https://google.github.io/adk-docs/evaluate/)).
+
+## Setup checklist (repo admin)
+
+1. Branch protection on `main`: require PR, **require Code Owner review**, require `validate` + `evals` checks.
+2. Replace `@shiraazsd` in `.github/CODEOWNERS` with real teams.
+3. Secret `GOOGLE_API_KEY` (free: <https://aistudio.google.com/apikey>) for evals.
+
+## Agents in other repos
+
+`marketplace_agent/` here is the reference agent skill evals run against; it is not deployed. Production
+agents live in their own repos (template: `skills-agent`, deploys to Bedrock AgentCore Runtime): each pins a bundle in
+`skills.lock`, picks the plugins it serves, re-runs those skills' evals against itself, upgrades via an
+automated PR, and owns its deploy.
+
+```bash
+mkt pack v0.7.0                         # what the release workflow publishes
+mkt eval common --file my/agent.yaml    # plugin names and extra eval files are accepted
+```
+
+Auth details: [docs/auth.md](docs/auth.md).

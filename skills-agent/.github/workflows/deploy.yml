@@ -1,0 +1,46 @@
+name: deploy
+# Builds the linux/arm64 agent image (agent + pinned skills), pushes it to ECR, and deploys
+# deploy/agentcore.yaml (Bedrock AgentCore Runtime). Inert until AWS_DEPLOY_ROLE_ARN is set
+# (outputs of deploy/bootstrap.yaml). Parameters not passed below keep their current stack values,
+# so VPC / JWT / Kerberos settings can be set once with `aws cloudformation deploy`.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  agentcore:
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions: { contents: read, id-token: write }
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      IMAGE: ${{ vars.ECR_REPOSITORY_URI }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml requests
+      - run: python scripts/skills.py fetch
+        env: { GH_TOKEN: "${{ secrets.SKILLS_TOKEN }}" }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-qemu-action@v3      # AgentCore needs arm64; QEMU builds it on x86 runners
+      - uses: docker/setup-buildx-action@v3
+      - run: docker buildx build --platform linux/arm64 -f deploy/Dockerfile -t "$IMAGE" --push .
+      - run: >
+          aws cloudformation deploy
+          --template-file deploy/agentcore.yaml
+          --stack-name support-agent
+          --capabilities CAPABILITY_NAMED_IAM
+          --no-fail-on-empty-changeset
+          --parameter-overrides
+          ImageUri=$IMAGE
+          AgentModel=${{ vars.AGENT_MODEL || 'gemini-flash-latest' }}
+          SkillkitAuth=${{ vars.SKILLKIT_AUTH || 'sigv4' }}
+      - run: aws cloudformation describe-stacks --stack-name support-agent --query "Stacks[0].Outputs" --output table

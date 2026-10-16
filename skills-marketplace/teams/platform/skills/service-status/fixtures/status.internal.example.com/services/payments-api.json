@@ -1,0 +1,1 @@
+{"service": "payments-api", "status": "degraded", "version": "4.12.1", "on_call": "@alice", "incident": "https://status.internal.example.com/inc/812"}

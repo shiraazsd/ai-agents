@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Support agent (Google ADK + marketplace skills) on Amazon Bedrock AgentCore Runtime.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: ECR image (linux/arm64) built from deploy/Dockerfile, e.g. <acct>.dkr.ecr.<region>.amazonaws.com/support-agent:<sha>
+  AgentModel:
+    Type: String
+    Default: gemini-flash-latest
+    Description: gemini-* uses the Gemini API key below; "bedrock/<model id>" uses Bedrock via the runtime role.
+  GoogleApiKeyParam:
+    Type: String
+    Default: /support-agent/google-api-key
+    Description: SSM SecureString with a Gemini API key ("" when using Bedrock models).
+  SkillkitAuth:
+    Type: String
+    Default: sigv4
+    AllowedValues: [sigv4, kerberos, oidc, none]
+    Description: How skill tools authenticate to backends.
+  KeytabSecretArn:
+    Type: String
+    Default: ""
+    Description: Secrets Manager secret holding a Kerberos keytab (SkillkitAuth=kerberos; image built with KERBEROS=true).
+  Krb5ConfParam:
+    Type: String
+    Default: ""
+    Description: SSM parameter holding krb5.conf (SkillkitAuth=kerberos).
+  JwtDiscoveryUrl:
+    Type: String
+    Default: ""
+    Description: OIDC discovery URL (Entra ID / Okta / Cognito) to let users call with SSO tokens; "" = IAM (SigV4) callers only.
+  JwtAllowedAudience:
+    Type: String
+    Default: ""
+  IdleSessionTimeout:
+    Type: Number
+    Default: 300
+    MinValue: 60
+    Description: Seconds an idle conversation keeps its microVM (memory is billed for the session's lifetime).
+  SubnetIds:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Private subnets, when skills must reach internal networks (KDC, on-prem APIs). Empty = public network mode.
+  SecurityGroupIds:
+    Type: CommaDelimitedList
+    Default: ""
+
+Conditions:
+  HasGoogleKey: !Not [!Equals [!Ref GoogleApiKeyParam, ""]]
+  HasKeytab: !Not [!Equals [!Ref KeytabSecretArn, ""]]
+  HasKrb5Conf: !Not [!Equals [!Ref Krb5ConfParam, ""]]
+  HasJwt: !Not [!Equals [!Ref JwtDiscoveryUrl, ""]]
+  HasJwtAudience: !Not [!Equals [!Ref JwtAllowedAudience, ""]]
+  InVpc: !Not [!Equals [!Join ["", !Ref SubnetIds], ""]]
+
+Resources:
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-runtime
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }
+      Policies:
+        - PolicyName: runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer]
+                Resource: !Sub
+                  - arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${Repo}
+                  - Repo: !Select [1, !Split ["/", !Select [0, !Split [":", !Ref ImageUri]]]]
+              - Effect: Allow
+                Action: [ecr:GetAuthorizationToken]
+                Resource: "*"
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+              - Effect: Allow
+                Action: [xray:PutTraceSegments, xray:PutTelemetryRecords, cloudwatch:PutMetricData]
+                Resource: "*"
+              - Effect: Allow  # Bedrock models (AgentModel=bedrock/...)
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource: "*"
+              - Effect: Allow  # AgentCore Identity: workload tokens for outbound OAuth/API-key credential providers
+                Action:
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+                Resource: "*"
+              - !If
+                - HasGoogleKey
+                - Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GoogleApiKeyParam}
+                - !Ref AWS::NoValue
+              - !If
+                - HasKrb5Conf
+                - Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${Krb5ConfParam}
+                - !Ref AWS::NoValue
+              - !If
+                - HasKeytab
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref KeytabSecretArn
+                - !Ref AWS::NoValue
+
+  Runtime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: support_agent
+      Description: Google ADK support agent serving pinned marketplace skills
+      RoleArn: !GetAtt RuntimeRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Ref ImageUri
+      ProtocolConfiguration: HTTP
+      LifecycleConfiguration:
+        IdleRuntimeSessionTimeout: !Ref IdleSessionTimeout
+      NetworkConfiguration: !If
+        - InVpc
+        - NetworkMode: VPC
+          NetworkModeConfig:
+            Subnets: !Ref SubnetIds
+            SecurityGroups: !Ref SecurityGroupIds
+        - NetworkMode: PUBLIC
+      AuthorizerConfiguration: !If
+        - HasJwt
+        - CustomJWTAuthorizer:
+            DiscoveryUrl: !Ref JwtDiscoveryUrl
+            AllowedAudience: !If [HasJwtAudience, [!Ref JwtAllowedAudience], !Ref AWS::NoValue]
+        - !Ref AWS::NoValue
+      EnvironmentVariables:
+        AGENT_MODEL: !Ref AgentModel
+        AWS_REGION_NAME: !Ref AWS::Region  # region for Bedrock calls via LiteLLM
+        SKILLKIT_AUTH: !Ref SkillkitAuth
+        GOOGLE_API_KEY_PARAM: !Ref GoogleApiKeyParam
+        KEYTAB_SECRET_ARN: !Ref KeytabSecretArn
+        KRB5_CONF_PARAM: !Ref Krb5ConfParam
+
+Outputs:
+  AgentRuntimeArn:
+    Description: Invoke with `aws bedrock-agentcore invoke-agent-runtime --agent-runtime-arn <arn> ...`
+    Value: !GetAtt Runtime.AgentRuntimeArn
